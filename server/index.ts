@@ -1,4 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
+import { spawn } from "child_process";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
@@ -6,6 +7,7 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
+// Middleware to log API requests
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
@@ -56,10 +58,32 @@ app.use((req, res, next) => {
     serveStatic(app);
   }
 
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
+  // Endpoint to run bots dynamically
+  app.post('/api/run-bot', (req, res) => {
+    const { bot_script_path, bot_token, api_id, api_hash } = req.body;
+
+    // Spawn Python bot process with env vars
+    const botProcess = spawn('python3', [bot_script_path], {
+      env: {
+        ...process.env, // Render ke saare variables
+        BOT_TOKEN: bot_token, // Is bot ka specific token
+        API_ID: api_id,
+        API_HASH: api_hash,
+      }
+    });
+
+    botProcess.stdout.on('data', (data) => {
+      console.log(`Bot Log: ${data}`);
+    });
+
+    botProcess.stderr.on('data', (data) => {
+      console.error(`Bot Error: ${data}`);
+    });
+
+    res.json({ message: `${bot_script_path} started successfully!` });
+  });
+
+  // Server listen default port
   const port = parseInt(process.env.PORT || '5000', 10);
   server.listen({
     port,
