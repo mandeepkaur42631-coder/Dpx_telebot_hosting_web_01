@@ -176,71 +176,85 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await startBot(bot.id, botPath);
       
       const updatedBot = await storage.getBot(bot.id);
-      res.json(updatedBot);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to start bot" });
-    }
+// server/routes.ts
+import type { Express, Request, Response, NextFunction } from "express";
+import { createServer, type Server } from "http";
+import { storage } from "./storage";
+import { auth } from './firebaseAdmin';
+import multer from "multer";
+import path from "path";
+import fs from "fs/promises";
+import { spawn, ChildProcess } from "child_process";
+
+const ADMIN_EMAIL = "durgeshbhaithakor@gmail.com";
+const BOTS_DIR = path.join(process.cwd(), "bots");
+const botProcesses = new Map<string, ChildProcess>();
+
+// Authentication Middleware
+const authMiddleware = async (req: Request, res: Response, next: NextFunction) => {
+  const token = req.headers.authorization?.split('Bearer ')[1];
+  if (!token) return res.status(401).send('Unauthorized');
+  
+  try {
+    const decodedToken = await auth.verifyIdToken(token);
+    (req as any).user = decodedToken;
+    next();
+  } catch (error) {
+    res.status(401).send('Unauthorized');
+  }
+};
+
+// ... Baaki functions jaise ensureBotsDir, upload, etc. yahan rahenge ...
+// ... Inme koi badlav nahi karna hai ...
+
+export async function registerRoutes(app: Express): Promise<Server> {
+  // ... ensureBotsDir() call ...
+
+  // NORMAL USERS ke liye: Sirf unke apne bots dikhayega
+  app.get("/api/my-bots", authMiddleware, async (req, res) => {
+    const user = (req as any).user;
+    const userBots = await storage.getBots(user.email);
+    res.json(userBots);
   });
 
-  app.post("/api/bots/:id/stop", async (req, res) => {
-    try {
-      const bot = await storage.getBot(req.params.id);
-      if (!bot) {
-        return res.status(404).json({ error: "Bot not found" });
-      }
-
-      stopBot(bot.id);
-      await storage.updateBot(bot.id, { status: "stopped", logs: bot.logs + "\n[Bot stopped by user]" });
-      
-      const updatedBot = await storage.getBot(bot.id);
-      res.json(updatedBot);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to stop bot" });
+  // ADMIN ke liye: Saare bots dikhayega
+  app.get("/api/all-bots", authMiddleware, async (req, res) => {
+    const user = (req as any).user;
+    if (user.email !== ADMIN_EMAIL) {
+      return res.status(403).send('Forbidden: Admin access required');
     }
+    const allBots = await storage.getBots();
+    res.json(allBots);
   });
 
-  app.post("/api/bots/:id/restart", async (req, res) => {
-    try {
-      const bot = await storage.getBot(req.params.id);
-      if (!bot) {
-        return res.status(404).json({ error: "Bot not found" });
-      }
+  // Bot Upload: Ab yeh owner ka email bhi save karega
+  app.post("/api/bots/upload", authMiddleware, upload.single('botFile'), async (req, res) => {
+    const user = (req as any).user;
+    const { name } = req.body;
+    const botFile = req.file;
 
-      stopBot(bot.id);
-      const botPath = path.join(BOTS_DIR, bot.fileName);
-      await startBot(bot.id, botPath);
-      
-      const updatedBot = await storage.getBot(bot.id);
-      res.json(updatedBot);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to restart bot" });
-    }
+    if (!botFile) return res.status(400).send("Bot file is required");
+
+    const bot = await storage.createBot({
+      name,
+      fileName: botFile.filename,
+      status: "stopped",
+      logs: "Bot uploaded successfully.",
+      ownerEmail: user.email, // Bot ka malik save karein
+    });
+    res.json(bot);
   });
 
-  app.delete("/api/bots/:id", async (req, res) => {
-    try {
-      const bot = await storage.getBot(req.params.id);
-      if (!bot) {
-        return res.status(404).json({ error: "Bot not found" });
-      }
-
-      stopBot(bot.id);
-      
-      const botPath = path.join(BOTS_DIR, bot.fileName);
-      try {
-        await fs.unlink(botPath);
-      } catch (error) {
-        console.error("Failed to delete bot file:", error);
-      }
-
-      await storage.deleteBot(bot.id);
-      res.json({ success: true });
-    } catch (error) {
-      res.status(500).json({ error: "Failed to delete bot" });
-    }
+  // ... /start, /stop, /delete routes yahan rahenge. Unhe authMiddleware se protect karna hai ...
+  
+  app.post("/api/bots/:id/start", authMiddleware, async (req, res) => {
+      //... logic ...
   });
-
+  
+  app.delete("/api/bots/:id", authMiddleware, async (req, res) => {
+      //... logic ...
+  });
+  
   const httpServer = createServer(app);
-
   return httpServer;
 }
